@@ -85,6 +85,11 @@ class EmoTalkProcessor:
             with torch.no_grad():
                 prediction = self.model.predict(audio_tensor, level_tensor, person_tensor)
                 prediction = prediction.squeeze().detach().cpu().numpy()
+                
+                # Xóa tensors khỏi GPU ngay sau khi dùng
+                del audio_tensor, level_tensor, person_tensor
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
             predict_time = time.perf_counter() - predict_start
             
             # Post-processing

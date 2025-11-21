@@ -178,6 +178,11 @@ class ProcessorWorker(threading.Thread):
         try:
             logger.info(f"[{request_id}] Worker {self.worker_id} processing...")
             
+            # Clear GPU cache trước khi xử lý
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
             # Process audio với chunking
             chunk_count = 0
             for chunk_result in self.processor.process_full_audio(
@@ -233,6 +238,11 @@ class ProcessorWorker(threading.Thread):
             
             logger.info(f"[{request_id}] ✅ Completed by worker {self.worker_id} "
                        f"in {processing_time:.3f}s, {chunk_count} chunks")
+            
+            # Clear GPU cache sau khi xử lý xong
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             
             self.request_queue.mark_completed(request_id, success=True)
             
@@ -447,7 +457,7 @@ def serve(port=50051, model_path="./pretrain_model/EmoTalk.pth",
     # Khởi động workers
     servicer.start_workers(processor)
     
-    # Tạo gRPC server
+    # Tạo gRPC server với timeout settings
     server = grpc.server(
         futures.ThreadPoolExecutor(max_workers=10),
         options=[
@@ -455,6 +465,11 @@ def serve(port=50051, model_path="./pretrain_model/EmoTalk.pth",
             ('grpc.max_receive_message_length', 100 * 1024 * 1024),  # 100MB
             ('grpc.so_reuseport', 1),
             ('grpc.use_local_subchannel_pool', 1),
+            ('grpc.keepalive_time_ms', 30000),  # 30s
+            ('grpc.keepalive_timeout_ms', 10000),  # 10s
+            ('grpc.http2.max_pings_without_data', 0),
+            ('grpc.http2.min_time_between_pings_ms', 10000),
+            ('grpc.http2.min_ping_interval_without_data_ms', 5000),
         ]
     )
     
