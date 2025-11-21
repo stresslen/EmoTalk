@@ -1,0 +1,53 @@
+# Dockerfile for Optimized gRPC Server
+FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
+
+# Cài đặt Python và dependencies
+RUN apt-get update && apt-get install -y \
+    python3 python3-pip \
+    libsndfile1 ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy requirements và cài torch trước để tránh conflict
+COPY requirements.txt .
+RUN pip3 install --no-cache-dir torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cu118 && \
+    grep -v "^torch" requirements.txt | grep -v "^nvidia-" | pip3 install --no-cache-dir -r /dev/stdin
+
+# Copy proto và generate gRPC code
+COPY proto/ ./proto/
+RUN python3 -m grpc_tools.protoc \
+    -I./proto \
+    --python_out=. \
+    --grpc_python_out=. \
+    ./proto/emotalk.proto
+
+# Copy source code
+COPY emotalk_processor.py .
+COPY model.py .
+COPY wav2vec.py .
+COPY utils.py .
+COPY grpc_server_optimized.py .
+
+# Copy pretrained model
+COPY pretrain_model/ ./pretrain_model/
+
+# Environment variables
+ENV PYTHONUNBUFFERED=1
+ENV MODEL_PATH=/app/pretrain_model/EmoTalk.pth
+ENV DEVICE=cuda
+ENV NUM_WORKERS=2
+ENV QUEUE_SIZE=100
+
+# Expose gRPC port
+EXPOSE 50051
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python3 -c "from grpc_client_optimized import OptimizedEmoTalkClient; import sys; \
+         client = OptimizedEmoTalkClient('localhost:50051'); \
+         sys.exit(0 if client.health_check() else 1); \
+         client.close()"
+
+# Run server
+CMD ["sh", "-c", "python3 grpc_server_optimized.py --port 50051 --device $DEVICE --num_workers $NUM_WORKERS --queue_size $QUEUE_SIZE"]

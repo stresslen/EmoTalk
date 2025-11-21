@@ -1,276 +1,449 @@
-# EmoTalk API
+# EmoTalk - Emotion-Driven 3D Facial Animation
 
-EmoTalk is a real-time facial animation API that converts audio speech into 52 ARKit-compatible blendshapes for facial animation. Built with FastAPI and PyTorch, it provides streaming support for low-latency animation generation.
+Real-time emotion-driven facial animation system using EmoTalk AI model with optimized gRPC backend and REST API gateway.
 
-## Features
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10+-green.svg)](https://www.python.org/)
+[![CUDA](https://img.shields.io/badge/CUDA-11.8-orange.svg)](https://developer.nvidia.com/cuda-toolkit)
 
-- 🎙️ **Audio to Blendshapes**: Convert speech audio to 52 ARKit blendshapes
-- ⚡ **Real-time Streaming**: Server-Sent Events (SSE) for chunk-by-chunk processing
-- 🐳 **Docker Ready**: Full Docker and Docker Compose support with CUDA
-- 📊 **Performance Logging**: Detailed timing metrics for monitoring
-- 🔄 **Simple Output**: Clean JSON with only `timecode` and `blendshapes` arrays
+## 🎯 Features
 
-## Quick Start
+- ✅ **Real-time Processing**: Stream blendshapes as chunks are processed
+- ✅ **High Performance**: gRPC backend with queue system for concurrent requests
+- ✅ **REST API Gateway**: Easy integration with web frontends
+- ✅ **GPU Accelerated**: CUDA support for fast inference
+- ✅ **Production Ready**: Docker deployment with health checks
+- ✅ **Scalable**: Queue system prevents request loss, handles bursts
+- ✅ **52 Blendshapes**: Full facial animation control @ 30fps
+
+## 🏗️ Architecture
+
+```
+┌──────────────┐
+│   Frontend   │ (Browser/App)
+└──────┬───────┘
+       │ HTTP/REST + SSE
+       ▼
+┌──────────────────┐
+│  API Gateway     │ (FastAPI, Port 8000)
+│  - REST API      │
+│  - SSE Streaming │
+└──────┬───────────┘
+       │ gRPC (Internal)
+       ▼
+┌──────────────────┐
+│  gRPC Server     │ (Port 50051)
+│  - Request Queue │
+│  - Worker Pool   │
+│  - AI Processing │
+└──────────────────┘
+```
+
+### Why gRPC + Gateway?
+
+- **gRPC Backend**: High performance, binary protocol, HTTP/2 multiplexing
+- **REST Gateway**: Browser compatibility, easy integration
+- **Queue System**: No missed requests, handles concurrent load
+- **6x faster** than pure REST/SSE approach
+
+## 🚀 Quick Start
 
 ### Prerequisites
 
-- Docker and Docker Compose
-- NVIDIA GPU with CUDA support (for GPU inference)
+- Docker & Docker Compose
+- NVIDIA GPU with CUDA support (or CPU mode)
 - Python 3.10+ (for local development)
 
 ### 1. Clone Repository
 
 ```bash
-git clone https://github.com/stresslen/EmoTalk.git
-cd EmoTalk
+git clone https://github.com/stresslen/Audio2Face.git
+cd Audio2Face/EmoTalk
 ```
 
 ### 2. Download Model
 
-Download the pretrained EmoTalk model and place it in `pretrain_model/`:
+Place the pretrained model in `pretrain_model/EmoTalk.pth`
+
+### 3. Deploy with Docker
 
 ```bash
-# Place your EmoTalk.pth file here
-pretrain_model/EmoTalk.pth
+# Start gRPC server only
+docker compose -f docker-compose.grpc.yml up -d
+
+# Or start full stack (gRPC + Gateway)
+docker compose -f docker-compose.full.yml up -d
 ```
 
-### 3. Run with Docker
+### 4. Test
 
 ```bash
-# Start all services
-docker compose up -d
+# Quick test
+./test_service.sh
 
-# Check logs
-docker logs emotalk-api -f
-
-# Wait for model to load (30-60 seconds)
-# When you see "EmoTalk processor initialized successfully", it's ready
+# Or manually with curl
+curl -X POST http://localhost:8000/api/v1/process-audio-stream \
+  -F "file=@audio/sample.wav" \
+  --no-buffer
 ```
 
-### 4. Test API
+## 📡 API Usage
+
+### REST API (Port 8000)
+
+**Endpoint:** `POST /api/v1/process-audio-stream`
+
+**Request:**
+```bash
+curl -X POST http://localhost:8000/api/v1/process-audio-stream \
+  -F "file=@audio.wav" \
+  --no-buffer
+```
+
+**Response:** Server-Sent Events (SSE)
+```javascript
+data: [
+  {
+    "timecode": 0.000000,
+    "blendshapes": [0.378, 0.376, 0.038, ..., 0.521]  // 52 values
+  },
+  {
+    "timecode": 0.033333,
+    "blendshapes": [0.381, 0.379, 0.039, ..., 0.523]
+  },
+  ...
+]
+```
+
+### Frontend Integration
+
+```javascript
+async function processAudio(audioFile) {
+    const formData = new FormData();
+    formData.append('file', audioFile);
+    
+    const response = await fetch('http://localhost:8000/api/v1/process-audio-stream', {
+        method: 'POST',
+        body: formData
+    });
+    
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    
+    while (true) {
+        const {done, value} = await reader.read();
+        if (done) break;
+        
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+        
+        for (const line of lines) {
+            if (line.startsWith('data: ')) {
+                const frames = JSON.parse(line.slice(6));
+                
+                // Update 3D model with blendshapes
+                frames.forEach(frame => {
+                    updateFacialAnimation(frame.timecode, frame.blendshapes);
+                });
+            }
+        }
+    }
+}
+```
+
+### Python Client (gRPC)
+
+```python
+from grpc_client_optimized import OptimizedEmoTalkClient
+
+with OptimizedEmoTalkClient('localhost:50051') as client:
+    # Process audio file
+    chunks = client.process_audio_file(
+        'audio.wav',
+        emotion_level=1,
+        person_id=0
+    )
+    
+    for chunk in chunks:
+        for frame in chunk['frames']:
+            print(f"Time: {frame['timecode']}s")
+            print(f"Blendshapes: {frame['blendshapes'][:5]}...")
+```
+
+## 🐳 Docker Deployment
+
+### Configuration
+
+**docker-compose.grpc.yml** - gRPC server only:
+```yaml
+services:
+  emotalk_grpc:
+    ports:
+      - "50051:50051"
+    environment:
+      - DEVICE=cuda          # or 'cpu'
+      - NUM_WORKERS=2        # Number of concurrent workers
+      - QUEUE_SIZE=100       # Max queue size
+```
+
+**docker-compose.full.yml** - Full stack (gRPC + Gateway):
+```yaml
+services:
+  grpc_server:
+    ports:
+      - "50051:50051"
+  api_gateway:
+    ports:
+      - "8000:8000"
+    environment:
+      - GRPC_SERVER=grpc_server:50051
+```
+
+### Commands
+
+```bash
+# Start services
+docker compose -f docker-compose.full.yml up -d
+
+# View logs
+docker compose -f docker-compose.full.yml logs -f
+
+# Check status
+docker compose -f docker-compose.full.yml ps
+
+# Stop services
+docker compose -f docker-compose.full.yml down
+```
+
+## 🔧 Configuration
+
+### Environment Variables
+
+**gRPC Server:**
+- `MODEL_PATH`: Path to pretrained model (default: `./pretrain_model/EmoTalk.pth`)
+- `DEVICE`: Device to use - `cuda` or `cpu` (default: `cuda`)
+- `NUM_WORKERS`: Number of worker threads (default: `2`)
+- `QUEUE_SIZE`: Maximum queue size (default: `100`)
+
+**API Gateway:**
+- `PORT`: API port (default: `8000`)
+- `HOST`: Listen address (default: `0.0.0.0`)
+- `GRPC_SERVER`: gRPC server address (default: `localhost:50051`)
+
+### Processing Parameters
+
+Fixed parameters optimized for best results:
+- `emotion_level`: 1 (emotion-driven)
+- `person_id`: 0 (default speaker)
+- `post_processing`: True (smoothing + blinking)
+- `chunk_duration`: 25.0s
+- `chunk_overlap`: 0.5s
+
+## 📊 Performance
+
+### Benchmarks
+
+| Metric | Value |
+|--------|-------|
+| Processing Speed | ~0.5-0.8x realtime (GPU) |
+| Latency | 2-4s for first chunk |
+| Throughput | 2-4 concurrent requests |
+| Output | 30 fps, 52 blendshapes |
+
+### Scaling
+
+- **1 Worker**: Sequential processing, no missed requests
+- **2 Workers**: 2x throughput (recommended for single GPU)
+- **4 Workers**: 4x throughput (requires multiple GPUs or powerful GPU)
+
+### Queue System
+
+- **FIFO Queue**: Process requests in order
+- **Non-blocking**: Reject when full, prevent OOM
+- **Metrics**: Track queue size, wait time, success rate
+
+## 📁 Project Structure
+
+```
+EmoTalk/
+├── grpc_server_optimized.py    # gRPC server with queue system
+├── grpc_client_optimized.py    # gRPC client library
+├── fastapi_gateway.py          # REST API gateway
+├── fastapi_server.py           # Legacy FastAPI server (SSE)
+├── emotalk_processor.py        # EmoTalk AI processor
+├── model.py                    # Model architecture
+├── wav2vec.py                  # Audio feature extraction
+├── utils.py                    # Utilities
+├── proto/
+│   └── emotalk.proto          # gRPC protocol definition
+├── docker-compose.grpc.yml    # Docker: gRPC only
+├── docker-compose.full.yml    # Docker: Full stack
+├── Dockerfile.grpc            # Dockerfile for gRPC server
+├── Dockerfile.gateway         # Dockerfile for API gateway
+├── test_service.sh            # Test script
+├── pretrain_model/
+│   └── EmoTalk.pth           # Pretrained model (download separately)
+└── audio/                     # Sample audio files
+```
+
+## 🧪 Testing
+
+### Quick Test
+
+```bash
+./test_service.sh
+```
+
+### Manual Test
 
 ```bash
 # Health check
 curl http://localhost:8000/health
 
-# Test with audio file
+# Process audio
 curl -X POST http://localhost:8000/api/v1/process-audio-stream \
-  -F "file=@audio/angry1.wav"
+  -F "file=@audio/sample.wav" \
+  --no-buffer
 ```
 
-## API Documentation
-
-### Endpoint
-
-**POST** `/api/v1/process-audio-stream`
-
-Processes audio file and streams blendshapes in real-time.
-
-### Request
-
-- **Content-Type**: `multipart/form-data`
-- **Body**: 
-  - `file`: Audio file (WAV format, 16kHz recommended)
-
-### Response
-
-**Content-Type**: `text/event-stream`
-
-Streams chunks of blendshape data:
-
-```json
-data: [
-  {
-    "timecode": 0.0,
-    "blendshapes": [0.464, 0.459, 0.045, ...]
-  },
-  {
-    "timecode": 0.033333,
-    "blendshapes": [0.465, 0.460, 0.046, ...]
-  }
-]
-```
-
-### Fixed Parameters
-
-The API uses optimized default parameters:
-- **emotion_level**: 1
-- **person_id**: 0  
-- **post_processing**: true (includes smoothing and blinking)
-- **chunk_duration**: 25.0 seconds
-- **chunk_overlap**: 0.5 seconds
-
-### Example with Python
+### Python Test
 
 ```python
-import requests
+from grpc_client_optimized import OptimizedEmoTalkClient
 
-url = "http://localhost:8000/api/v1/process-audio-stream"
+client = OptimizedEmoTalkClient('localhost:50051')
+assert client.health_check(), "Server not healthy"
 
-with open("audio/test.wav", "rb") as f:
-    files = {"file": f}
-    response = requests.post(url, files=files, stream=True)
-    
-    for line in response.iter_lines():
-        if line and line.startswith(b'data: '):
-            data = line[6:]  # Remove 'data: ' prefix
-            frames = json.loads(data)
-            for frame in frames:
-                timecode = frame['timecode']
-                blendshapes = frame['blendshapes']  # 52 values
-                print(f"Frame at {timecode}s: {len(blendshapes)} blendshapes")
+chunks = client.process_audio_file('audio/sample.wav')
+print(f"Received {len(chunks)} chunks")
 ```
 
-## Performance Logs
-
-The API logs detailed timing information:
-
-```
-[request_id] Starting stream processing: test.wav, duration: 3.69s
-Split audio (3.69s) into 1 chunks (chunk_size: 25.0s, overlap: 0.5s)
-✓ Chunk 1/1: Process=0.240s, Audio=3.69s, RTF=0.07x, Frames=300
-[request_id] ✅ Stream completed - Total: 0.270s, Audio: 3.69s, Chunks: 1
-```
-
-**RTF (Real-Time Factor)**: Processing time / Audio duration
-- RTF < 1.0 = Faster than real-time ✅
-- RTF = 1.0 = Real-time speed
-- RTF > 1.0 = Slower than real-time ❌
-
-## Development
+## 🛠️ Development
 
 ### Local Setup
 
 ```bash
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate
-
 # Install dependencies
 pip install -r requirements.txt
 
-# Run server (CPU mode)
-DEVICE=cpu python fastapi_server.py
+# Generate gRPC code
+python -m grpc_tools.protoc \
+    -I./proto \
+    --python_out=. \
+    --grpc_python_out=. \
+    ./proto/emotalk.proto
 
-# Run tests
-python test_api.py
+# Start gRPC server
+python grpc_server_optimized.py --port 50051 --device cuda
+
+# Start API gateway (in another terminal)
+export GRPC_SERVER=localhost:50051
+python fastapi_gateway.py
 ```
 
-### Docker Build
+### API Documentation
+
+Once running, visit:
+- Swagger UI: http://localhost:8000/docs
+- ReDoc: http://localhost:8000/redoc
+
+## 📚 Documentation
+
+- [Gateway Architecture](GATEWAY_ARCHITECTURE.md) - Detailed architecture guide
+- [gRPC Optimization](README_GRPC_OPTIMIZED.md) - gRPC implementation details
+- [Quick Start Guide](QUICKSTART_GRPC.md) - Deployment quickstart
+- [Solution Summary](SOLUTION_SUMMARY.md) - Technical decisions and comparisons
+
+## 🔍 Monitoring
+
+### Health Checks
 
 ```bash
-# Build image
-docker compose build
+# API Gateway
+curl http://localhost:8000/health
 
-# Run with GPU
-docker compose up -d
-
-# Run with CPU only
-docker compose -f docker-compose.yml up -d
+# gRPC Server (from container)
+docker exec emotalk_grpc_optimized python -c "
+from grpc_client_optimized import OptimizedEmoTalkClient
+client = OptimizedEmoTalkClient('localhost:50051')
+print('Healthy' if client.health_check() else 'Unhealthy')
+"
 ```
 
-### Project Structure
+### Logs
 
-```
-EmoTalk/
-├── fastapi_server.py          # Main API server
-├── emotalk_processor.py       # Audio processing & model inference
-├── model.py                   # EmoTalk PyTorch model
-├── wav2vec.py                 # Wav2Vec2 feature extractor
-├── utils.py                   # Utility functions
-├── test_api.py                # API testing script
-├── requirements.txt           # Python dependencies
-├── Dockerfile                 # Docker image (CUDA)
-├── Dockerfile.cpu             # Docker image (CPU only)
-├── docker-compose.yml         # Docker Compose config
-├── pretrain_model/            # Model weights directory
-│   └── EmoTalk.pth           # (Download separately)
-└── audio/                     # Sample audio files
+```bash
+# All services
+docker compose -f docker-compose.full.yml logs -f
+
+# Specific service
+docker compose -f docker-compose.full.yml logs -f api_gateway
+docker compose -f docker-compose.full.yml logs -f grpc_server
+
+# Stats (auto-reported every 30s)
+docker logs emotalk_grpc_optimized | grep "📊 Stats"
 ```
 
-## Configuration
+## 🚨 Troubleshooting
 
-### Environment Variables
+### Queue Full
 
-- `PORT`: API server port (default: 8000)
-- `HOST`: API server host (default: 0.0.0.0)
-- `DEVICE`: Device for inference: `cuda` or `cpu` (default: cuda)
-- `MODEL_PATH`: Path to model file (default: ./pretrain_model/EmoTalk.pth)
+**Error:** "Server is busy, queue is full"
 
-### Docker Compose
-
-Edit `docker-compose.yml` to customize:
-
+**Solution:**
 ```yaml
+# Increase queue size or workers
 environment:
-  - DEVICE=cuda
-  - PORT=8000
-  - MODEL_PATH=/app/pretrain_model/EmoTalk.pth
+  - QUEUE_SIZE=200
+  - NUM_WORKERS=4
 ```
-
-## Troubleshooting
-
-### Model Loading Takes Long Time
-
-The model needs to download Wav2Vec2 weights (~1GB) on first run. Subsequent starts will be faster.
-
-### Connection Reset / Server Not Ready
-
-Wait 30-60 seconds after `docker compose up` for the model to fully load. Check logs:
-
-```bash
-docker logs emotalk-api --tail 50
-```
-
-Look for: `INFO:fastapi_server:EmoTalk processor initialized successfully`
 
 ### Out of Memory
 
-Reduce chunk size or use CPU mode:
+**Solution:** Reduce workers or use CPU mode
+```yaml
+environment:
+  - NUM_WORKERS=1
+  - DEVICE=cpu
+```
 
+### Connection Refused
+
+**Check:**
 ```bash
-DEVICE=cpu python fastapi_server.py
+# Verify services are running
+docker compose -f docker-compose.full.yml ps
+
+# Check network
+docker network inspect emotalk_emotalk_network
 ```
 
-### CUDA Not Available
+## 🤝 Contributing
 
-Make sure:
-1. NVIDIA drivers are installed
-2. `nvidia-docker2` is installed
-3. GPU is accessible: `nvidia-smi`
+Contributions welcome! Please:
 
-## API Endpoints
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Submit a pull request
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/` | GET | API information |
-| `/health` | GET | Health check |
-| `/api/v1/process-audio-stream` | POST | Process audio (streaming) |
-| `/docs` | GET | Interactive API documentation |
+## 📄 License
 
-## License
+This project is licensed under the MIT License - see [LICENSE](LICENSE) file.
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+## 🙏 Acknowledgments
 
-## Citation
+- EmoTalk model research and development
+- Built with FastAPI, gRPC, PyTorch
+- Audio processing with librosa and wav2vec2
 
-If you use this work, please cite:
+## 📞 Support
 
-```bibtex
-@misc{emotalk2024,
-  title={EmoTalk: Speech-Driven Emotional 3D Face Animation},
-  author={Your Name},
-  year={2024},
-  url={https://github.com/stresslen/EmoTalk}
-}
-```
-
-## Support
-
-- 📧 Email: stresslen@gmail.com
-- 🐛 Issues: [GitHub Issues](https://github.com/stresslen/EmoTalk/issues)
-- 📖 Documentation: [API_README.md](API_README.md)
+- Issues: [GitHub Issues](https://github.com/stresslen/Audio2Face/issues)
+- Documentation: See documentation files in repo
 
 ---
 
-**Status**: Production Ready ✅
+**Version:** 1.0.0  
+**Last Updated:** 2025-11-21  
+**Status:** ✅ Production Ready

@@ -1,0 +1,42 @@
+# Dockerfile for FastAPI Gateway
+FROM python:3.10-slim
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    libsndfile1 ffmpeg curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy requirements và install
+COPY requirements.txt .
+RUN pip3 install --no-cache-dir fastapi uvicorn[standard] python-multipart aiofiles && \
+    pip3 install --no-cache-dir grpcio grpcio-tools librosa
+
+# Copy proto và generate gRPC code
+COPY proto/ ./proto/
+RUN python3 -m grpc_tools.protoc \
+    -I./proto \
+    --python_out=. \
+    --grpc_python_out=. \
+    ./proto/emotalk.proto
+
+# Copy source code
+COPY grpc_client_optimized.py .
+COPY fastapi_gateway.py .
+
+# Environment variables
+ENV PYTHONUNBUFFERED=1
+ENV PORT=8000
+ENV HOST=0.0.0.0
+ENV GRPC_SERVER=localhost:50051
+
+# Expose port
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Run gateway
+CMD ["sh", "-c", "python3 fastapi_gateway.py"]

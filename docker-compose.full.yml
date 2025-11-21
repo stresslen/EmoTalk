@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  # gRPC Server - Backend xử lý AI
+  grpc_server:
+    build:
+      context: .
+      dockerfile: Dockerfile.grpc
+    container_name: emotalk_grpc_server
+    ports:
+      - "50051:50051"
+    environment:
+      - MODEL_PATH=/app/pretrain_model/EmoTalk.pth
+      - DEVICE=cuda
+      - NUM_WORKERS=2
+      - QUEUE_SIZE=100
+    volumes:
+      - ./pretrain_model:/app/pretrain_model:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    networks:
+      - emotalk_network
+    healthcheck:
+      test: ["CMD", "python3", "-c", "from grpc_client_optimized import OptimizedEmoTalkClient; import sys; client = OptimizedEmoTalkClient('localhost:50051'); sys.exit(0 if client.health_check() else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # FastAPI Gateway - REST API cho Frontend
+  api_gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    container_name: emotalk_api_gateway
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - HOST=0.0.0.0
+      - GRPC_SERVER=grpc_server:50051
+    depends_on:
+      - grpc_server
+    restart: unless-stopped
+    networks:
+      - emotalk_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+networks:
+  emotalk_network:
+    driver: bridge
