@@ -143,14 +143,23 @@ async def process_audio_stream(
     
     try:
         # Đọc file
+        file_read_start = time.perf_counter()
         audio_bytes = await file.read()
+        file_read_time = time.perf_counter() - file_read_start
+        
+        # Load audio
+        audio_load_start = time.perf_counter()
         audio_array, sr = librosa.load(io.BytesIO(audio_bytes), sr=16000)
+        audio_load_time = time.perf_counter() - audio_load_start
+        
         audio_duration = len(audio_array)/sr
         logger.info(f"[{request_id}] Starting stream processing: {file.filename}, duration: {audio_duration:.2f}s")
+        logger.info(f"[{request_id}] ⏱️  File read: {file_read_time:.3f}s, Audio load: {audio_load_time:.3f}s")
         
         async def generate():
             """Generator để stream chunks"""
             chunk_count = 0
+            processing_start = time.perf_counter()
             
             for chunk_result in processor.process_full_audio(
                 audio_array,
@@ -175,14 +184,22 @@ async def process_audio_stream(
                 
                 chunk_count += 1
                 
-                logger.info(f"[{request_id}] Streaming chunk {chunk_count}: {chunk_result['start_time']:.2f}s-{chunk_result['end_time']:.2f}s, {len(frames)} frames")
-                
+                # Serialize JSON
+                json_start = time.perf_counter()
                 import json
+                json_data = json.dumps(frames)
+                json_time = time.perf_counter() - json_start
+                
+                logger.info(f"[{request_id}] Streaming chunk {chunk_count}: {chunk_result['start_time']:.2f}s-{chunk_result['end_time']:.2f}s, {len(frames)} frames, JSON: {json_time:.3f}s")
+                
                 # Trả về array frames trực tiếp, không wrap trong object
-                yield f"data: {json.dumps(frames)}\n\n"
+                yield f"data: {json_data}\n\n"
                 
                 if chunk_result['is_final']:
-                    total_time = time.perf_counter() - request_start_time  # Dùng perf_counter
+                    total_time = time.perf_counter() - request_start_time
+                    processing_time = time.perf_counter() - processing_start
+                    overhead = total_time - processing_time - file_read_time - audio_load_time
+                    logger.info(f"[{request_id}] ⏱️  Breakdown - File: {file_read_time:.3f}s, Load: {audio_load_time:.3f}s, Processing: {processing_time:.3f}s, Overhead: {overhead:.3f}s")
                     logger.info(f"[{request_id}] ✅ Stream completed - Total: {total_time:.3f}s, Audio: {audio_duration:.2f}s, Chunks: {chunk_count}")
         
         return StreamingResponse(
