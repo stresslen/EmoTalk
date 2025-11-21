@@ -1,28 +1,52 @@
-__pycache__
-*.pyc
-.ipynb_checkpoints
-/.env
-/etc/
-/TODO.md
-/docker/requirements.txt
-
-# Large files
-venv/
+# Python
 __pycache__/
+*.py[cod]
 *.pyc
 *.pyo
 *.pyd
 .Python
 *.so
-*.dylib
-*.dll
+*.egg
+*.egg-info/
+dist/
+build/
+.ipynb_checkpoints
+
+# Environment
+venv/
+.env
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+*.log
+nohup.out
+
+# Data files
+audio/
+result/
+media/
 *.npy
 *.npz
 *.pkl
+
+# Models (large files - download separately)
+pretrain_model/*.pth
+pretrain_model/*.pt
+pretrain_model/*.onnx
+
+# Build artifacts
 *.blend
 *.blend1
-media/
-result/
-*.log
-.vscode/
-.DS_Store
+
+# Project specific
+/etc/
+/TODO.md
+/docker/requirements.txt
+audio/
