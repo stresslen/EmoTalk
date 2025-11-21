@@ -1,0 +1,159 @@
+version: '3.8'
+
+services:
+  # Kafka infrastructure
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: emotalk-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - emotalk-network
+    restart: unless-stopped
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: emotalk-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "9094:9094"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 300000
+    networks:
+      - emotalk-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: emotalk-kafka-ui
+    depends_on:
+      - kafka
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: emotalk-cluster
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    networks:
+      - emotalk-network
+    restart: unless-stopped
+
+  # EmoTalk API Service (GPU version)
+  emotalk-api-gpu:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: emotalk-api-gpu
+    ports:
+      - "8000:8000"
+    environment:
+      - DEVICE=cuda
+      - MODEL_PATH=/app/pretrain_model/EmoTalk.pth
+      - PORT=8000
+      - HOST=0.0.0.0
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+    volumes:
+      - ./pretrain_model:/app/pretrain_model:ro
+      - ./result:/app/result
+      - ./audio:/app/audio:ro
+    networks:
+      - emotalk-network
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    profiles:
+      - gpu
+
+  # EmoTalk API Service (CPU version)
+  emotalk-api-cpu:
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    container_name: emotalk-api-cpu
+    ports:
+      - "8000:8000"
+    environment:
+      - DEVICE=cpu
+      - MODEL_PATH=/app/pretrain_model/EmoTalk.pth
+      - PORT=8000
+      - HOST=0.0.0.0
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+    volumes:
+      - ./pretrain_model:/app/pretrain_model:ro
+      - ./result:/app/result
+      - ./audio:/app/audio:ro
+    networks:
+      - emotalk-network
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    profiles:
+      - cpu
+
+  # gRPC Server (optional)
+  emotalk-grpc:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: emotalk-grpc
+    ports:
+      - "50051:50051"
+    environment:
+      - DEVICE=cuda
+      - MODEL_PATH=/app/pretrain_model/EmoTalk.pth
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+    volumes:
+      - ./pretrain_model:/app/pretrain_model:ro
+      - ./result:/app/result
+    networks:
+      - emotalk-network
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    command: ["python3", "grpc_server.py", "--device", "cuda", "--kafka_servers", "kafka:9092"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    profiles:
+      - grpc
+
+networks:
+  emotalk-network:
+    driver: bridge
+
+volumes:
+  kafka-data:
+  zookeeper-data:
