@@ -161,9 +161,8 @@ class EmoTalkProcessor:
             end = min(start + chunk_samples, len(audio_array))
             chunk = audio_array[start:end]
             
-            # Pad nếu chunk cuối quá ngắn
-            if len(chunk) < chunk_samples and len(chunk) > 0:
-                chunk = np.pad(chunk, (0, chunk_samples - len(chunk)), mode='constant')
+            # KHÔNG pad - giữ nguyên độ dài thực của audio
+            # Chunk cuối có thể ngắn hơn chunk_duration, model vẫn xử lý được
             
             start_time = start / sample_rate
             end_time = end / sample_rate
